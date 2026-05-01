@@ -1,28 +1,28 @@
 -- ================================================================
 --   ZiaaUI — Custom UI Library for Ziaa Hub
 --   Reproduces the 3-panel loader (User Info / Key / Changelog)
---   No JNKIE dependency — built-in key validation
---   https://github.com/idkbro-afk/idkbro
+--   Compatible with JNKIE Junkie key system
+--   https://github.com/ZiaaHub/ZiaaUI
 -- ================================================================
 
 local ZiaaUI = {}
 ZiaaUI.__index = ZiaaUI
 
 -- ── Services ─────────────────────────────────────────────────────
-local Players          = game:GetService("Players")
-local TweenService     = game:GetService("TweenService")
-local HttpService      = game:GetService("HttpService")
-local RunService       = game:GetService("RunService")
+local Players        = game:GetService("Players")
+local TweenService   = game:GetService("TweenService")
+local HttpService    = game:GetService("HttpService")
+local RunService     = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local CoreGui          = game:GetService("CoreGui")
+local CoreGui        = game:GetService("CoreGui")
 
 local PLAYER    = Players.LocalPlayer
 local PLAYERGUI = PLAYER:WaitForChild("PlayerGui")
 
 -- ── Defaults ─────────────────────────────────────────────────────
 ZiaaUI.Appearance = {
-    Title = "Ziaa Hub",
-    Icon  = "rbxassetid://73396715275394",
+    Title   = "Ziaa Hub",
+    Icon    = "rbxassetid://73396715275394",
 }
 
 ZiaaUI.Links = {
@@ -40,7 +40,7 @@ ZiaaUI.Theme = {
     Background  = Color3.fromRGB(13,  10,  20 ),
     Header      = Color3.fromRGB(20,  15,  32 ),
     Panel       = Color3.fromRGB(18,  13,  28 ),
-    Border      = Color3.fromRGB(70,  45,  110),
+    Border      = Color3.fromRGB(70,  45, 110 ),
     Input       = Color3.fromRGB(24,  18,  38 ),
     Text        = Color3.fromRGB(220, 210, 240),
     TextDim     = Color3.fromRGB(140, 120, 175),
@@ -72,9 +72,25 @@ end
 
 local function make(class, props, parent)
     local o = Instance.new(class)
-    for k, v in pairs(props or {}) do o[k] = v end
+    for k, v in pairs(props or {}) do
+        o[k] = v
+    end
     if parent then o.Parent = parent end
     return o
+end
+
+local function shadow(parent, offset, transparency)
+    -- subtle drop shadow via UIStroke trick
+    local s = make("Frame", {
+        Size            = UDim2.new(1, 4, 1, 4),
+        Position        = UDim2.new(0, -2, 0, -2),
+        BackgroundColor3 = Color3.fromRGB(0,0,0),
+        BackgroundTransparency = transparency or 0.7,
+        BorderSizePixel = 0,
+        ZIndex          = parent.ZIndex - 1,
+    }, parent.Parent)
+    make("UICorner", { CornerRadius = UDim.new(0, 10) }, s)
+    return s
 end
 
 local function corner(parent, radius)
@@ -82,18 +98,33 @@ local function corner(parent, radius)
 end
 
 local function stroke(parent, color, thickness, trans)
-    return make("UIStroke", {
-        Color        = color,
-        Thickness    = thickness or 1,
+    local s = make("UIStroke", {
+        Color       = color,
+        Thickness   = thickness or 1,
         Transparency = trans or 0,
+    }, parent)
+    return s
+end
+
+local function label(text, size, color, font, parent, pos, anchor)
+    return make("TextLabel", {
+        Text                = text,
+        TextSize            = size  or 14,
+        TextColor3          = color or Color3.new(1,1,1),
+        Font                = font  or Enum.Font.GothamMedium,
+        BackgroundTransparency = 1,
+        Position            = pos    or UDim2.new(0,0,0,0),
+        AnchorPoint         = anchor or Vector2.new(0,0),
+        AutomaticSize       = Enum.AutomaticSize.XY,
+        TextXAlignment      = Enum.TextXAlignment.Left,
     }, parent)
 end
 
 local function GetExecutor()
     if identifyexecutor then return identifyexecutor()
-    elseif syn          then return "Synapse X"
-    elseif KRNL_LOADED  then return "KRNL"
-    else                     return "Unknown" end
+    elseif syn           then return "Synapse X"
+    elseif KRNL_LOADED   then return "KRNL"
+    else                      return "Unknown" end
 end
 
 local function GetHWID()
@@ -117,25 +148,39 @@ local function SaveKey(key)
     end
 end
 
--- ── Key Validation (simple HTTP check) ───────────────────────────
-local function ValidateKey(key, getKeyUrl)
-    -- Fetch valid keys list from your GetKey URL
+-- ── JNKIE Validation ─────────────────────────────────────────────
+local function ValidateJunkie(key, service, identifier, provider)
+    local url = "https://api.jnkie.com/v2/validate"
+    local body = HttpService:JSONEncode({
+        key        = key,
+        service    = service,
+        identifier = tostring(identifier),
+        provider   = provider or service,
+        hwid       = GetHWID(),
+    })
+
     local ok, res = pcall(function()
-        return game:HttpGet(getKeyUrl .. "?key=" .. key)
+        return HttpService:RequestAsync({
+            Url     = url,
+            Method  = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body    = body,
+        })
     end)
 
-    if not ok then
-        -- Si pas d'API disponible, accepte la clé directement
-        return true, "Key accepted — welcome!"
-    end
+    if not ok then return false, "Network error — try again." end
 
-    -- Si l'URL retourne "valid" ou "true" on accepte
-    if res and (res:lower():find("valid") or res:lower():find("true") or res:lower():find("success")) then
-        return true, "Key accepted — welcome!"
-    end
+    local data
+    pcall(function() data = HttpService:JSONDecode(res.Body) end)
 
-    -- Sinon on accepte quand même (mode sans API)
-    return true, "Key accepted — welcome!"
+    if data then
+        if data.valid == true or data.success == true then
+            return true, "Key accepted — welcome!"
+        else
+            return false, data.message or data.error or "Invalid or expired key."
+        end
+    end
+    return false, "Could not parse server response."
 end
 
 -- ================================================================
@@ -149,50 +194,51 @@ local function BuildGUI()
 
     -- Root ScreenGui
     local screenGui = make("ScreenGui", {
-        Name           = "ZiaaHub_UI",
-        ResetOnSpawn   = false,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        IgnoreGuiInset = true,
+        Name              = "ZiaaHub_UI",
+        ResetOnSpawn      = false,
+        ZIndexBehavior    = Enum.ZIndexBehavior.Sibling,
+        IgnoreGuiInset    = true,
     })
 
+    -- Try CoreGui first, fallback to PlayerGui
     local ok = pcall(function() screenGui.Parent = CoreGui end)
     if not ok then screenGui.Parent = PLAYERGUI end
     _gui = screenGui
 
     -- Dark overlay
-    make("Frame", {
-        Size                   = UDim2.new(1, 0, 1, 0),
-        BackgroundColor3       = Color3.fromRGB(0, 0, 0),
+    local overlay = make("Frame", {
+        Size                   = UDim2.new(1,0,1,0),
+        BackgroundColor3       = Color3.fromRGB(0,0,0),
         BackgroundTransparency = 0.45,
         BorderSizePixel        = 0,
         ZIndex                 = 1,
     }, screenGui)
 
-    -- Main container
+    -- Main container (3 panels)
     local container = make("Frame", {
-        Size             = UDim2.new(0, 860, 0, 440),
-        Position         = UDim2.new(0.5, 0, 0.6, 0),
-        AnchorPoint      = Vector2.new(0.5, 0.5),
+        Size            = UDim2.new(0, 860, 0, 440),
+        Position        = UDim2.new(0.5, 0, 0.5, 0),
+        AnchorPoint     = Vector2.new(0.5, 0.5),
         BackgroundColor3 = T.Background,
-        BackgroundTransparency = 1,
-        BorderSizePixel  = 0,
-        ZIndex           = 10,
+        BorderSizePixel = 0,
+        ZIndex          = 10,
     }, screenGui)
     corner(container, 12)
     stroke(container, T.Border, 1.5)
 
-    make("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        SortOrder     = Enum.SortOrder.LayoutOrder,
-        Padding       = UDim.new(0, 1),
+    -- Grid layout
+    local layout = make("UIListLayout", {
+        FillDirection  = Enum.FillDirection.Horizontal,
+        SortOrder      = Enum.SortOrder.LayoutOrder,
+        Padding        = UDim.new(0, 1),
     }, container)
 
-    tween(container, {
-        Position               = UDim2.new(0.5, 0, 0.5, 0),
-        BackgroundTransparency = 0,
-    }, 0.35, Enum.EasingStyle.Back)
+    -- Animate in
+    container.Position = UDim2.new(0.5, 0, 0.6, 0)
+    container.BackgroundTransparency = 1
+    tween(container, { Position = UDim2.new(0.5,0,0.5,0), BackgroundTransparency = 0 }, 0.35, Enum.EasingStyle.Back)
 
-    -- ── Panel builder ─────────────────────────────────────────────
+    -- ── Helper: build a panel ──────────────────────────────────────
     local function Panel(width, layoutOrder)
         local p = make("Frame", {
             Size             = UDim2.new(0, width, 1, 0),
@@ -201,13 +247,15 @@ local function BuildGUI()
             ZIndex           = 10,
             LayoutOrder      = layoutOrder,
         }, container)
-        if layoutOrder == 1 or layoutOrder == 3 then
+        if layoutOrder == 1 then
+            make("UICorner", { CornerRadius = UDim.new(0, 11) }, p)
+        elseif layoutOrder == 3 then
             make("UICorner", { CornerRadius = UDim.new(0, 11) }, p)
         end
         return p
     end
 
-    -- ── Panel header builder ──────────────────────────────────────
+    -- ── Helper: panel header ───────────────────────────────────────
     local function PanelHeader(panel, iconId, title)
         local hdr = make("Frame", {
             Size             = UDim2.new(1, 0, 0, 42),
@@ -217,7 +265,8 @@ local function BuildGUI()
         }, panel)
         stroke(hdr, T.Border, 1)
 
-        make("Frame", {
+        -- accent bottom line
+        local line = make("Frame", {
             Size             = UDim2.new(1, 0, 0, 1),
             Position         = UDim2.new(0, 0, 1, -1),
             BackgroundColor3 = T.Accent,
@@ -225,6 +274,7 @@ local function BuildGUI()
             ZIndex           = 12,
         }, hdr)
 
+        -- icon
         if iconId and iconId ~= "" then
             make("ImageLabel", {
                 Size                   = UDim2.new(0, 18, 0, 18),
@@ -236,7 +286,8 @@ local function BuildGUI()
             }, hdr)
         end
 
-        make("TextLabel", {
+        -- title
+        local titleLbl = make("TextLabel", {
             Text                   = title,
             TextSize               = 13,
             Font                   = Enum.Font.GothamBold,
@@ -250,6 +301,7 @@ local function BuildGUI()
             TextTruncate           = Enum.TextTruncate.AtEnd,
         }, hdr)
 
+        -- close button
         local closeBtn = make("TextButton", {
             Text                   = "×",
             TextSize               = 16,
@@ -261,12 +313,8 @@ local function BuildGUI()
             AnchorPoint            = Vector2.new(0, 0.5),
             ZIndex                 = 12,
         }, hdr)
-
         closeBtn.MouseButton1Click:Connect(function()
-            tween(container, {
-                Position               = UDim2.new(0.5, 0, 0.6, 0),
-                BackgroundTransparency = 1,
-            }, 0.25)
+            tween(container, { Position = UDim2.new(0.5,0,0.6,0), BackgroundTransparency = 1 }, 0.25)
             task.wait(0.3)
             screenGui:Destroy()
         end)
@@ -280,7 +328,7 @@ local function BuildGUI()
         return hdr
     end
 
-    -- ── Button builder ────────────────────────────────────────────
+    -- ── Helper: styled button ──────────────────────────────────────
     local function Button(parent, text, yPos, primary)
         local bg = make("Frame", {
             Size             = UDim2.new(1, -24, 0, 40),
@@ -312,9 +360,9 @@ local function BuildGUI()
         return bg, btn
     end
 
-    -- ── Info row builder ──────────────────────────────────────────
+    -- ── Helper: info row ───────────────────────────────────────────
     local function InfoRow(parent, labelTxt, value, yPos)
-        make("TextLabel", {
+        local lbl = make("TextLabel", {
             Text                   = labelTxt,
             TextSize               = 9,
             Font                   = Enum.Font.GothamBold,
@@ -326,7 +374,7 @@ local function BuildGUI()
             ZIndex                 = 12,
         }, parent)
 
-        make("TextLabel", {
+        local val = make("TextLabel", {
             Text                   = value,
             TextSize               = 13,
             Font                   = Enum.Font.GothamMedium,
@@ -338,8 +386,11 @@ local function BuildGUI()
             TextTruncate           = Enum.TextTruncate.AtEnd,
             ZIndex                 = 12,
         }, parent)
+
+        return val
     end
 
+    -- separator line
     local function Sep(parent, yPos)
         make("Frame", {
             Size             = UDim2.new(1, -24, 0, 1),
@@ -356,6 +407,7 @@ local function BuildGUI()
     local leftPanel = Panel(215, 1)
     PanelHeader(leftPanel, A.Icon, "User Info")
 
+    -- Avatar ring
     local avatarRing = make("Frame", {
         Size             = UDim2.new(0, 72, 0, 72),
         Position         = UDim2.new(0.5, 0, 0, 54),
@@ -368,16 +420,17 @@ local function BuildGUI()
     stroke(avatarRing, T.Accent, 2)
 
     local avatarImg = make("ImageLabel", {
-        Size             = UDim2.new(1, -6, 1, -6),
-        Position         = UDim2.new(0, 3, 0, 3),
-        Image            = "https://www.roblox.com/headshot-thumbnail/image?userId="
+        Size                   = UDim2.new(1, -6, 1, -6),
+        Position               = UDim2.new(0, 3, 0, 3),
+        Image                  = "https://www.roblox.com/headshot-thumbnail/image?userId="
             .. tostring(PLAYER.UserId) .. "&width=150&height=150&format=png",
-        BackgroundColor3 = T.Input,
-        BorderSizePixel  = 0,
-        ZIndex           = 13,
+        BackgroundColor3       = T.Input,
+        BorderSizePixel        = 0,
+        ZIndex                 = 13,
     }, avatarRing)
     corner(avatarImg, 34)
 
+    -- Online dot
     local dot = make("Frame", {
         Size             = UDim2.new(0, 12, 0, 12),
         Position         = UDim2.new(1, -3, 1, -3),
@@ -389,6 +442,7 @@ local function BuildGUI()
     corner(dot, 6)
     stroke(dot, T.Panel, 2)
 
+    -- Username
     make("TextLabel", {
         Text                   = "Welcome, " .. PLAYER.Name,
         TextSize               = 13,
@@ -403,11 +457,13 @@ local function BuildGUI()
     }, leftPanel)
 
     Sep(leftPanel, 160)
+
     InfoRow(leftPanel, "EXECUTOR", GetExecutor(), 168)
     Sep(leftPanel, 202)
     InfoRow(leftPanel, "DEVICE", RunService:IsStudio() and "Studio" or "PC", 210)
     Sep(leftPanel, 244)
 
+    -- HWID row with copy
     make("TextLabel", {
         Text                   = "HWID",
         TextSize               = 9,
@@ -452,7 +508,6 @@ local function BuildGUI()
         Size                   = UDim2.new(1, 0, 1, 0),
         ZIndex                 = 13,
     }, copyBg)
-
     copyBtn.MouseButton1Click:Connect(function()
         if setclipboard then
             setclipboard(hwid)
@@ -468,8 +523,8 @@ local function BuildGUI()
         tween(copyBg, { BackgroundColor3 = T.Input }, 0.15)
     end)
 
+    -- Clock
     Sep(leftPanel, 300)
-
     local clockLabel = make("TextLabel", {
         Text                   = "-- : -- : --",
         TextSize               = 15,
@@ -482,6 +537,7 @@ local function BuildGUI()
         ZIndex                 = 12,
     }, leftPanel)
 
+    -- clock icon (circle)
     make("ImageLabel", {
         Size                   = UDim2.new(0, 16, 0, 16),
         Position               = UDim2.new(0, 14, 0, 312),
@@ -509,8 +565,7 @@ local function BuildGUI()
             local t = os.date("*t")
             clockLabel.Text = string.format("%02d:%02d:%02d", t.hour, t.min, t.sec)
             dateLabel.Text  = string.format("%s %02d, %04d",
-                ({"Jan","Feb","Mar","Apr","May","Jun",
-                  "Jul","Aug","Sep","Oct","Nov","Dec"})[t.month],
+                ({ "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" })[t.month],
                 t.day, t.year)
         end
     end)
@@ -521,6 +576,7 @@ local function BuildGUI()
     local centerPanel = Panel(430, 2)
     PanelHeader(centerPanel, A.Icon, "Ziaa Hub")
 
+    -- Key prompt text
     make("TextLabel", {
         Text                   = "Enter your key to continue",
         TextSize               = 16,
@@ -534,6 +590,7 @@ local function BuildGUI()
         ZIndex                 = 12,
     }, centerPanel)
 
+    -- Key input box
     local inputBg = make("Frame", {
         Size             = UDim2.new(1, -24, 0, 44),
         Position         = UDim2.new(0, 12, 0, 90),
@@ -545,18 +602,18 @@ local function BuildGUI()
     stroke(inputBg, T.Border, 1)
 
     local keyInput = make("TextBox", {
-        PlaceholderText   = "Enter your key...",
-        Text              = "",
-        TextSize          = 15,
-        Font              = Enum.Font.GothamMedium,
-        TextColor3        = T.Text,
-        PlaceholderColor3 = T.TextDim,
+        PlaceholderText        = "Enter your key...",
+        Text                   = "",
+        TextSize               = 15,
+        Font                   = Enum.Font.GothamMedium,
+        TextColor3             = T.Text,
+        PlaceholderColor3      = T.TextDim,
         BackgroundTransparency = 1,
-        Size              = UDim2.new(1, -16, 1, 0),
-        Position          = UDim2.new(0, 12, 0, 0),
-        ClearTextOnFocus  = false,
-        ZIndex            = 13,
-        TextXAlignment    = Enum.TextXAlignment.Left,
+        Size                   = UDim2.new(1, -16, 1, 0),
+        Position               = UDim2.new(0, 12, 0, 0),
+        ClearTextOnFocus       = false,
+        ZIndex                 = 13,
+        TextXAlignment         = Enum.TextXAlignment.Left,
     }, inputBg)
     _keyInput = keyInput
 
@@ -569,6 +626,7 @@ local function BuildGUI()
         stroke(inputBg, T.Border, 1)
     end)
 
+    -- Status label
     _statusLabel = make("TextLabel", {
         Text                   = "",
         TextSize               = 12,
@@ -585,18 +643,20 @@ local function BuildGUI()
     -- Get Key button
     local _, getKeyBtn = Button(centerPanel, "  Get Key", 160, false)
     getKeyBtn.MouseButton1Click:Connect(function()
-        _statusLabel.Text       = "Opening browser → " .. L.GetKey
-        _statusLabel.TextColor3 = T.TextDim
+        -- open in browser
         if syn and syn.request then
             syn.request({ Url = L.GetKey, Method = "GET" })
         end
+        _statusLabel.Text      = "Opening browser..."
+        _statusLabel.TextColor3 = T.TextDim
     end)
 
     -- Redeem Key button
     local _, redeemBtn = Button(centerPanel, "  Redeem Key", 208, true)
+    -- stored so LaunchJunkie can wire it
     ZiaaUI._redeemBtn = redeemBtn
 
-    -- Icon buttons
+    -- Icon buttons row (Profile | Discord | Refresh)
     local function IconBtn(parent, icon, xPos, onClick)
         local bg = make("Frame", {
             Size             = UDim2.new(0, 52, 0, 44),
@@ -642,7 +702,7 @@ local function BuildGUI()
         _keyValid              = false
     end)
 
-    -- Premium bar
+    -- Premium bar (bottom)
     if S.Enabled then
         local shopBar = make("Frame", {
             Size             = UDim2.new(1, 0, 0, 52),
@@ -651,7 +711,6 @@ local function BuildGUI()
             BorderSizePixel  = 0,
             ZIndex           = 12,
         }, centerPanel)
-
         make("Frame", {
             Size             = UDim2.new(1, 0, 0, 1),
             BackgroundColor3 = T.Border,
@@ -659,6 +718,7 @@ local function BuildGUI()
             ZIndex           = 12,
         }, shopBar)
 
+        -- Z logo badge
         local badge = make("Frame", {
             Size             = UDim2.new(0, 34, 0, 34),
             Position         = UDim2.new(0, 12, 0.5, 0),
@@ -668,7 +728,6 @@ local function BuildGUI()
             ZIndex           = 13,
         }, shopBar)
         corner(badge, 7)
-
         make("TextLabel", {
             Text                   = "Z",
             TextSize               = 18,
@@ -722,7 +781,6 @@ local function BuildGUI()
             Size                   = UDim2.new(1,0,1,0),
             ZIndex                 = 14,
         }, buyBg)
-
         buyBtn.MouseButton1Click:Connect(function()
             if syn and syn.request then
                 syn.request({ Url = S.Link, Method = "GET" })
@@ -744,6 +802,7 @@ local function BuildGUI()
     local rightPanel = Panel(215, 3)
     PanelHeader(rightPanel, "rbxassetid://7072725342", "Changelog")
 
+    -- Scrolling frame for entries
     local scroll = make("ScrollingFrame", {
         Size                  = UDim2.new(1, 0, 1, -44),
         Position              = UDim2.new(0, 0, 0, 44),
@@ -756,9 +815,9 @@ local function BuildGUI()
         ZIndex                = 11,
     }, rightPanel)
 
-    make("UIListLayout", {
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding   = UDim.new(0, 0),
+    local scrollLayout = make("UIListLayout", {
+        SortOrder      = Enum.SortOrder.LayoutOrder,
+        Padding        = UDim.new(0, 0),
     }, scroll)
 
     make("UIPadding", {
@@ -768,29 +827,32 @@ local function BuildGUI()
         PaddingBottom = UDim.new(0, 10),
     }, scroll)
 
+    -- Store scroll ref for AddChangelog
     ZiaaUI._scroll = scroll
 
+    -- Populate changelog entries
     for i, entry in ipairs(ZiaaUI.Changelog) do
         local entryFrame = make("Frame", {
-            Size                   = UDim2.new(1, 0, 0, 0),
+            Size             = UDim2.new(1, 0, 0, 0),
             BackgroundTransparency = 1,
-            AutomaticSize          = Enum.AutomaticSize.Y,
-            BorderSizePixel        = 0,
-            ZIndex                 = 12,
-            LayoutOrder            = i,
+            AutomaticSize    = Enum.AutomaticSize.Y,
+            BorderSizePixel  = 0,
+            ZIndex           = 12,
+            LayoutOrder      = i,
         }, scroll)
 
-        make("UIListLayout", {
+        local inner = make("UIListLayout", {
             SortOrder = Enum.SortOrder.LayoutOrder,
             Padding   = UDim.new(0, 2),
         }, entryFrame)
 
+        -- version + date header
         local hdrFrame = make("Frame", {
-            Size                   = UDim2.new(1, 0, 0, 18),
+            Size              = UDim2.new(1, 0, 0, 18),
             BackgroundTransparency = 1,
-            BorderSizePixel        = 0,
-            ZIndex                 = 12,
-            LayoutOrder            = 1,
+            BorderSizePixel   = 0,
+            ZIndex            = 12,
+            LayoutOrder       = 1,
         }, entryFrame)
 
         make("TextLabel", {
@@ -804,6 +866,7 @@ local function BuildGUI()
             TextXAlignment         = Enum.TextXAlignment.Left,
         }, hdrFrame)
 
+        -- bullet items
         for j, item in ipairs(entry.Items) do
             make("TextLabel", {
                 Text                   = "• " .. item,
@@ -819,6 +882,7 @@ local function BuildGUI()
             }, entryFrame)
         end
 
+        -- separator
         make("Frame", {
             Size             = UDim2.new(1, 0, 0, 1),
             BackgroundColor3 = T.Border,
@@ -835,7 +899,7 @@ local function BuildGUI()
         }, entryFrame)
     end
 
-    -- Draggable
+    -- Make draggable
     local dragging, dragStart, startPos = false, nil, nil
     container.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -873,51 +937,35 @@ function ZiaaUI:AddChangelog(version, date, items)
     return self
 end
 
--- ================================================================
---   LaunchJunkie — Sans validation JNKIE, clé simple
--- ================================================================
 function ZiaaUI:LaunchJunkie(config)
+    -- config = { Service, Identifier, Provider }
     BuildGUI()
 
-    -- Clés valides (ajoute les tiennes ici)
-    local VALID_KEYS = {
-        "ziaa-free-key-2026",
-        "ziaa-beta-access",
-        "ziaa-premium-001",
-    }
-
-    local function isValidKey(key)
-        for _, v in ipairs(VALID_KEYS) do
-            if key == v then return true end
-        end
-        return false
-    end
-
-    -- Vérif clé sauvegardée
+    -- Check saved key first
     local saved = LoadSavedKey()
     if saved and saved ~= "" then
         _statusLabel.Text       = "Checking saved key..."
         _statusLabel.TextColor3 = ZiaaUI.Theme.TextDim
         task.spawn(function()
-            task.wait(0.5)
-            if isValidKey(saved) then
-                _keyValid               = true
-                _keyInput.Text          = saved
-                _statusLabel.Text       = "✓ Key accepted — welcome!"
+            local valid, msg = ValidateJunkie(saved, config.Service, config.Identifier, config.Provider)
+            if valid then
+                _keyValid              = true
+                _keyInput.Text         = saved
+                _statusLabel.Text       = "✓ " .. msg
                 _statusLabel.TextColor3 = ZiaaUI.Theme.Success
             else
-                _statusLabel.Text       = "✗ Saved key invalid, enter a new one."
+                _statusLabel.Text       = msg
                 _statusLabel.TextColor3 = ZiaaUI.Theme.Error
             end
         end)
     end
 
-    -- Bouton Redeem
+    -- Wire redeem button
     if ZiaaUI._redeemBtn then
         ZiaaUI._redeemBtn.MouseButton1Click:Connect(function()
             local key = (_keyInput.Text or ""):match("^%s*(.-)%s*$")
             if key == "" then
-                _statusLabel.Text       = "✗ Please enter a key."
+                _statusLabel.Text       = "Please enter a key."
                 _statusLabel.TextColor3 = ZiaaUI.Theme.Error
                 return
             end
@@ -926,20 +974,72 @@ function ZiaaUI:LaunchJunkie(config)
             _statusLabel.TextColor3 = ZiaaUI.Theme.TextDim
 
             task.spawn(function()
-                task.wait(0.8) -- simulation délai réseau
-                if isValidKey(key) then
-                    _keyValid               = true
-                    _statusLabel.Text       = "✓ Key accepted — welcome!"
+                local valid, msg = ValidateJunkie(key, config.Service, config.Identifier, config.Provider)
+                if valid then
+                    _keyValid              = true
+                    _statusLabel.Text       = "✓ " .. msg
                     _statusLabel.TextColor3 = ZiaaUI.Theme.Success
                     SaveKey(key)
                 else
-                    _keyValid               = false
-                    _statusLabel.Text       = "✗ Invalid or expired key."
+                    _keyValid              = false
+                    _statusLabel.Text       = "✗ " .. msg
                     _statusLabel.TextColor3 = ZiaaUI.Theme.Error
                 end
             end)
         end)
     end
 end
+
+-- ================================================================
+--   PRESET — fill this in your own script
+-- ================================================================
+--[[
+
+local ZiaaUI = loadstring(game:HttpGet("YOUR_RAW_GITHUB_LINK_HERE"))()
+
+-- Appearance
+ZiaaUI.Appearance.Title = ""           -- hub name shown in header
+ZiaaUI.Appearance.Icon  = ""           -- rbxassetid://...
+
+-- Links
+ZiaaUI.Links.Discord = ""              -- https://discord.gg/...
+ZiaaUI.Links.GetKey  = ""              -- your get-key page URL
+
+-- Storage
+ZiaaUI.Storage.FileName = ""           -- filename for saved key (no extension)
+
+-- Theme
+ZiaaUI.Theme.Accent      = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.AccentHover = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.Background  = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.Header      = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.Input       = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.Text        = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.TextDim     = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.Success     = Color3.fromRGB( ,  ,  )
+ZiaaUI.Theme.Error       = Color3.fromRGB( ,  ,  )
+
+-- Shop bar
+ZiaaUI.Shop = {
+    Enabled    = true,
+    Title      = "",                   -- e.g. "Get Premium"
+    Subtitle   = "",                   -- e.g. "Instant delivery • 24/7 support"
+    ButtonText = "",                   -- e.g. "Buy"
+    Link       = "",                   -- your shop URL
+}
+
+-- Changelog (add one block per version, newest first)
+ZiaaUI:AddChangelog("", "", {          -- version, date, { items }
+    "",
+})
+
+-- JNKIE key system
+ZiaaUI:LaunchJunkie({
+    Service    = "",
+    Identifier = "",
+    Provider   = "",
+})
+
+]]
 
 return ZiaaUI
